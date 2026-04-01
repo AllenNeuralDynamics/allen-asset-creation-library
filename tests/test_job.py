@@ -27,7 +27,7 @@ from codeocean.data_asset import (
 )
 from pydantic import SecretStr
 
-from allen_automation_capsule_library.job import CaptureResultsJob, JobSettings
+from allen_asset_creation_library.job import CaptureResultsJob, JobSettings
 
 RESOURCES_DIR = Path(os.path.dirname(os.path.realpath(__file__))) / "resources"
 
@@ -120,9 +120,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         stopped_job_settings = deepcopy(base_job_settings)
         stopped_input_computation = deepcopy(base_input_computation)
         stopped_input_computation["end_status"] = ComputationEndStatus.Stopped
-        cls.co_patcher = patch(
-            "allen_automation_capsule_library.job.CodeOcean"
-        )
+        cls.co_patcher = patch("allen_asset_creation_library.job.CodeOcean")
         cls.mock_codeocean_client = cls.co_patcher.start()
         (
             cls.mock_codeocean_client.return_value.computations.get_computation
@@ -168,7 +166,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         self.assertIn("End Status: succeeded.", captured.output[0])
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         ".source_computation",
         new_callable=PropertyMock,
     )
@@ -182,7 +180,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         self.assertIn("Error code: 1", str(e.exception))
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         ".source_computation",
         new_callable=PropertyMock,
     )
@@ -199,7 +197,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         self.assertIn("End Status: failed", str(e.exception))
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         ".source_computation",
         new_callable=PropertyMock,
     )
@@ -212,7 +210,7 @@ class TestCaptureResultsJob(unittest.TestCase):
             self.stopped_job._check_pipeline_end_status()
         self.assertIn("End Status: stopped", str(e.exception))
 
-    @patch("allen_automation_capsule_library.job.urlopen")
+    @patch("allen_asset_creation_library.job.urlopen")
     def test_get_data_description(
         self,
         mock_urlopen: MagicMock,
@@ -225,7 +223,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         data_description = self.job._get_data_description()
         self.assertEqual({"key": "value"}, data_description)
 
-    @patch("allen_automation_capsule_library.job.boto3.client")
+    @patch("allen_asset_creation_library.job.boto3.client")
     def test_check_if_target_already_exists_true(
         self, mock_boto_client: MagicMock
     ):
@@ -245,7 +243,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         )
         self.assertTrue(s3_check)
 
-    @patch("allen_automation_capsule_library.job.boto3.client")
+    @patch("allen_asset_creation_library.job.boto3.client")
     def test_check_if_target_already_exists_false(
         self, mock_boto_client: MagicMock
     ):
@@ -297,24 +295,22 @@ class TestCaptureResultsJob(unittest.TestCase):
         self.assertIn("Something went wrong!", captured.output[0])
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._get_data_description"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_if_target_already_exists"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._capture_results"
     )
-    @patch(
-        "allen_automation_capsule_library.job.MetadataDbClient.register_asset"
-    )
+    @patch("allen_asset_creation_library.job.MetadataDbClient.register_asset")
     def test_run_job_success(
         self,
         mock_register_asset: MagicMock,
@@ -340,9 +336,8 @@ class TestCaptureResultsJob(unittest.TestCase):
         with self.assertLogs(level="INFO") as captured:
             self.job.run_job()
         expected_logs = [
-            "INFO:allen_automation_capsule_library.job:"
-            "{'message': 'success'}",
-            "INFO:allen_automation_capsule_library.job:"
+            "INFO:allen_asset_creation_library.job:" "{'message': 'success'}",
+            "INFO:allen_asset_creation_library.job:"
             "Finished capturing asset!",
         ]
         self.assertEqual(expected_logs, captured.output)
@@ -368,26 +363,24 @@ class TestCaptureResultsJob(unittest.TestCase):
         )
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._get_data_description"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_if_target_already_exists"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._capture_results"
     )
+    @patch("allen_asset_creation_library.job.MetadataDbClient.register_asset")
     @patch(
-        "allen_automation_capsule_library.job.MetadataDbClient.register_asset"
-    )
-    @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._send_notification"
     )
     def test_run_job_target_exists_failure(
@@ -411,27 +404,26 @@ class TestCaptureResultsJob(unittest.TestCase):
         mock_capture_results.assert_not_called()
 
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._get_data_description"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_if_target_already_exists"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._capture_results"
     )
     @patch(
-        "allen_automation_capsule_library.job.MetadataDbClient"
-        ".register_asset"
+        "allen_asset_creation_library.job.MetadataDbClient" ".register_asset"
     )
     @patch(
-        "allen_automation_capsule_library.job.CaptureResultsJob"
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._send_notification"
     )
     def test_run_job_results_capture_failure(

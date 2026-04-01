@@ -1,4 +1,4 @@
-# aind-automation-capsule-library
+# allen-asset-creation-library
 
 
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
@@ -10,7 +10,7 @@
 
 ## Getting Started
 
-This library can be used to create a Code Ocean automation capsule.
+This library can be used to create a Code Ocean capsule that will register results as a data asset.
 
 ### Usage
 

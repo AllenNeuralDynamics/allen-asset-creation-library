@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aind-automation-capsule-library"
+name = "allen-asset-creation-library"
 description = "Code for capsule to run after a pipeline is finished."
 requires-python = ">=3.10"
 authors = [
@@ -59,7 +59,7 @@ exclude = '''
 
 [tool.coverage.run]
 omit = ["*__init__*"]
-source = ["allen_automation_capsule_library", "tests"]
+source = ["allen_asset_creation_library", "tests"]
 
 [tool.coverage.report]
 exclude_lines = [
