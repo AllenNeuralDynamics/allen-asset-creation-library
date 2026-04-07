@@ -1,0 +1,58 @@
+{
+   "creation_time": "2025-01-29T13:04:34.041703Z",
+   "data_level": "derived",
+   "data_summary": "example description",
+   "describedBy": "https://raw.githubusercontent.com/AllenNeuralDynamics/aind-data-schema/main/src/aind_data_schema/core/data_description.py",
+   "funding_source": [
+      {
+         "fundee": [
+            {
+               "name": "Example Person",
+               "object_type": "Person",
+               "registry": "Open Researcher and Contributor ID (ORCID)",
+               "registry_identifier": null
+            }
+         ],
+         "funder": {
+            "abbreviation": "e",
+            "name": "Example",
+            "registry": "Research Organization Registry (ROR)",
+            "registry_identifier": "0"
+         },
+         "grant_number": null,
+         "object_type": "Funding"
+      }
+   ],
+   "group": null,
+   "institution": {
+      "abbreviation": "e",
+      "name": "Example",
+      "registry": "Research Organization Registry (ROR)",
+      "registry_identifier": "0"
+   },
+   "investigators": [
+      {
+         "name": "Example Person",
+         "object_type": "Person",
+         "registry": "Open Researcher and Contributor ID (ORCID)",
+         "registry_identifier": null
+      }
+   ],
+   "license": "CC-BY-4.0",
+   "modalities": [
+      {
+         "abbreviation": "behavior",
+         "name": "Behavior"
+      }
+   ],
+   "name": "123456_2025-01-28_16-48-50_processed_2025-01-29_13-04-34",
+   "object_type": "Data description",
+   "project_name": "Example Project",
+   "restrictions": null,
+   "schema_version": "2.2.0",
+   "source_data": [
+      "123456_2025-01-28_16-48-50"
+   ],
+   "subject_id": "123456",
+   "tags": ["custom_tag"]
+}

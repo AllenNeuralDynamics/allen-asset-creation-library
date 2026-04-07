@@ -1,0 +1,25 @@
+{
+   "id": "124-abc",
+   "created": 0,
+   "name": "123456_2025-01-28_16-48-50_processed_2025-01-29_13-04-34",
+   "mount": "123456_2025-01-28_16-48-50_processed_2025-01-29_13-04-34",
+   "state": "draft",
+   "type": "result",
+   "last_used": 0,
+   "description": "example description",
+   "tags": [
+      "123456",
+      "custom_tag",
+      "derived"
+   ],
+   "source_bucket": {
+      "origin": "aws",
+      "bucket": "example",
+      "prefix": "123456_2025-01-28_16-48-50_processed_2025-01-29_13-04-34",
+      "external": true
+   },
+   "custom_metadata": {
+      "subject_id": "123456",
+      "data level": "derived"
+   }
+}
