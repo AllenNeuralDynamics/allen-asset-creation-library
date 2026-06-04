@@ -165,10 +165,11 @@ class CaptureResultsJob:
             default_tags.add(data_level)
             custom_metadata["data level"] = data_level
 
-        if not data_description.get("tags"):
-            data_description_tags = set()
-        else:
-            data_description_tags = set(data_description["tags"])
+        data_description_tags = (
+            set()
+            if not data_description.get("tags")
+            else set(data_description["tags"])
+        )
         tags = list(default_tags.union(data_description_tags))
         tags.sort()
         source = Source(
