@@ -98,6 +98,7 @@ class TestCaptureResultsJob(unittest.TestCase):
             "created": 1769559830,
             "name": "Run 0000001",
             "run_time": 20,
+            "owner": "Person 1",
             "state": "completed",
             "processes": [{"name": "test_capsule", "capsule_id": "00a"}],
             "end_status": "succeeded",
