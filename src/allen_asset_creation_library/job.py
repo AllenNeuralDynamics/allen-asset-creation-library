@@ -49,9 +49,6 @@ class JobSettings(BaseSettings):
         default="api.allenneuraldynamics.org",
         description="Host name for DocDB API Gateway",
     )
-    docdb_collection_version: str = Field(
-        default="v1", description="Version of Metadata Index"
-    )
     destination_bucket: str = Field(
         ..., description="S3 bucket to capture results to."
     )
@@ -92,10 +89,6 @@ class CaptureResultsJob:
             domain=self.job_settings.codeocean_domain,
             token=self.job_settings.codeocean_token.get_secret_value(),
         )
-        self.docdb_client = MetadataDbClient(
-            host=self.job_settings.docdb_host,
-            version=self.job_settings.docdb_collection_version,
-        )
 
     @cached_property
     def source_computation(self) -> Computation:
@@ -103,6 +96,46 @@ class CaptureResultsJob:
         return self.co_client.computations.get_computation(
             self.job_settings.co_source_computation_id
         )
+
+    @cached_property
+    def data_description(self) -> dict:
+        """Download and cache the data description from the results folder."""
+        return self._get_data_description()
+
+    @cached_property
+    def docdb_client(self) -> MetadataDbClient:
+        """
+        Build the DocDB client, deriving the collection version from the
+        metadata schema version rather than accepting it as user input.
+        """
+        version = self._collection_version_from_schema(self.data_description)
+        return MetadataDbClient(
+            host=self.job_settings.docdb_host, version=version
+        )
+
+    @staticmethod
+    def _collection_version_from_schema(data_description: dict) -> str:
+        """
+        Map the semantically-versioned data_description ``schema_version`` to
+        the DocDB collection version (major version ``N`` -> ``vN``).
+
+        Fails loudly when the schema version is absent or cannot be parsed,
+        rather than guessing which collection the metadata belongs to.
+        """
+        schema_version = data_description.get("schema_version")
+        if not schema_version:
+            raise ValueError(
+                "data_description is missing a 'schema_version'; cannot "
+                "determine the DocDB collection version."
+            )
+        major = str(schema_version).split(".")[0]
+        if not major.isdigit():
+            raise ValueError(
+                "Could not parse a major version from schema_version "
+                f"'{schema_version}'; cannot determine the DocDB collection "
+                "version."
+            )
+        return f"v{int(major)}"
 
     def _check_pipeline_end_status(self):
         """Checks if the pipeline finished successfully."""
@@ -213,7 +246,7 @@ class CaptureResultsJob:
         """
         try:
             self._check_pipeline_end_status()
-            data_description = self._get_data_description()
+            data_description = self.data_description
             s3_bucket = self.job_settings.destination_bucket
             s3_prefix = data_description["name"].strip("/")
             if self._check_if_target_already_exists(
