@@ -105,6 +105,23 @@ class CaptureResultsJob:
 
         Fails loudly when the schema version is absent or cannot be parsed,
         rather than guessing which collection the metadata belongs to.
+
+        Parameters
+        ----------
+        data_description : dict
+            The parsed ``data_description.json`` contents. Expected to contain
+            a semantically-versioned ``schema_version`` field.
+
+        Returns
+        -------
+        str
+            The DocDB collection version, e.g. ``"v2"``.
+
+        Raises
+        ------
+        ValueError
+            If ``schema_version`` is absent or its major version cannot be
+            parsed as an integer.
         """
         schema_version = data_description.get("schema_version")
         if not schema_version:
