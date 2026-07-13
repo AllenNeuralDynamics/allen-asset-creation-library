@@ -84,7 +84,6 @@ class TestCaptureResultsJob(unittest.TestCase):
             "codeocean_token": "abc-123",
             "codeocean_domain": "https://example.com",
             "docdb_host": "example.com",
-            "docdb_collection_version": "v1",
             "destination_bucket": "example",
             "asset_permissions": {
                 "users": [{"email": "abc@example.com", "role": "owner"}],
@@ -223,6 +222,56 @@ class TestCaptureResultsJob(unittest.TestCase):
         ).return_value = b'{"key": "value"}'
         data_description = self.job._get_data_description()
         self.assertEqual({"key": "value"}, data_description)
+
+    def test_collection_version_from_schema(self):
+        """Maps the schema major version to the DocDB collection version."""
+        self.assertEqual(
+            "v2",
+            self.job._collection_version_from_schema(
+                {"schema_version": "2.2.0"}
+            ),
+        )
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(
+                {"schema_version": "1.0.0"}
+            ),
+        )
+
+    def test_collection_version_from_schema_missing(self):
+        """Fails loudly when schema_version is absent."""
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema({})
+        self.assertIn("missing a 'schema_version'", str(e.exception))
+
+    def test_collection_version_from_schema_malformed(self):
+        """Fails loudly when schema_version cannot be parsed."""
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(
+                {"schema_version": "not-a-version"}
+            )
+        self.assertIn("Could not parse a major version", str(e.exception))
+
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob"
+        "._get_data_description"
+    )
+    def test_docdb_client_version_derived(
+        self, mock_get_data_description: MagicMock
+    ):
+        """The DocDB client version is derived from the schema version."""
+        mock_get_data_description.return_value = {"schema_version": "2.2.0"}
+        job = CaptureResultsJob(
+            job_settings=JobSettings(
+                codeocean_token=SecretStr("abc-123"),
+                codeocean_domain="https://example.com",
+                docdb_host="example.com",
+                destination_bucket="example",
+                co_source_computation_id="123-456",
+                co_source_exit_code=0,
+            )
+        )
+        self.assertEqual("v2", job.docdb_client.version)
 
     @patch("allen_asset_creation_library.job.boto3.client")
     def test_check_if_target_already_exists_true(
