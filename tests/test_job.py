@@ -252,27 +252,6 @@ class TestCaptureResultsJob(unittest.TestCase):
             )
         self.assertIn("Could not parse a major version", str(e.exception))
 
-    @patch(
-        "allen_asset_creation_library.job.CaptureResultsJob"
-        "._get_data_description"
-    )
-    def test_docdb_client_version_derived(
-        self, mock_get_data_description: MagicMock
-    ):
-        """The DocDB client version is derived from the schema version."""
-        mock_get_data_description.return_value = {"schema_version": "2.2.0"}
-        job = CaptureResultsJob(
-            job_settings=JobSettings(
-                codeocean_token=SecretStr("abc-123"),
-                codeocean_domain="https://example.com",
-                docdb_host="example.com",
-                destination_bucket="example",
-                co_source_computation_id="123-456",
-                co_source_exit_code=0,
-            )
-        )
-        self.assertEqual("v2", job.docdb_client.version)
-
     @patch("allen_asset_creation_library.job.boto3.client")
     def test_check_if_target_already_exists_true(
         self, mock_boto_client: MagicMock
@@ -360,10 +339,10 @@ class TestCaptureResultsJob(unittest.TestCase):
         "allen_asset_creation_library.job.CaptureResultsJob"
         "._capture_results"
     )
-    @patch("allen_asset_creation_library.job.MetadataDbClient.register_asset")
+    @patch("allen_asset_creation_library.job.MetadataDbClient")
     def test_run_job_success(
         self,
-        mock_register_asset: MagicMock,
+        mock_docdb_client: MagicMock,
         mock_capture_results: MagicMock,
         mock_check_if_target_already_exists: MagicMock,
         mock_get_data_description: MagicMock,
@@ -382,6 +361,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         mock_capture_results.return_value = DataAsset(
             **self.base_capture_result_response
         )
+        mock_register_asset = mock_docdb_client.return_value.register_asset
         mock_register_asset.return_value = {"message": "success"}
         with self.assertLogs(level="INFO") as captured:
             self.job.run_job()
@@ -404,6 +384,10 @@ class TestCaptureResultsJob(unittest.TestCase):
                 groups=None,
                 everyone=EveryoneRole.Viewer,
             ),
+        )
+        # The collection version is derived from schema_version "2.2.0".
+        mock_docdb_client.assert_called_once_with(
+            host="example.com", version="v2"
         )
         mock_register_asset.assert_called_once_with(
             s3_location=(
