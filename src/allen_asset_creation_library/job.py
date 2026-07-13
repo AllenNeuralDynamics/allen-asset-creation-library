@@ -97,22 +97,6 @@ class CaptureResultsJob:
             self.job_settings.co_source_computation_id
         )
 
-    @cached_property
-    def data_description(self) -> dict:
-        """Download and cache the data description from the results folder."""
-        return self._get_data_description()
-
-    @cached_property
-    def docdb_client(self) -> MetadataDbClient:
-        """
-        Build the DocDB client, deriving the collection version from the
-        metadata schema version rather than accepting it as user input.
-        """
-        version = self._collection_version_from_schema(self.data_description)
-        return MetadataDbClient(
-            host=self.job_settings.docdb_host, version=version
-        )
-
     @staticmethod
     def _collection_version_from_schema(data_description: dict) -> str:
         """
@@ -246,7 +230,7 @@ class CaptureResultsJob:
         """
         try:
             self._check_pipeline_end_status()
-            data_description = self.data_description
+            data_description = self._get_data_description()
             s3_bucket = self.job_settings.destination_bucket
             s3_prefix = data_description["name"].strip("/")
             if self._check_if_target_already_exists(
@@ -269,7 +253,13 @@ class CaptureResultsJob:
                 data_asset_id=data_asset.id,
                 permissions=self.job_settings.asset_permissions,
             )
-            docdb_response = self.docdb_client.register_asset(
+            docdb_client = MetadataDbClient(
+                host=self.job_settings.docdb_host,
+                version=self._collection_version_from_schema(
+                    data_description
+                ),
+            )
+            docdb_response = docdb_client.register_asset(
                 s3_location=f"s3://{s3_bucket}/{s3_prefix}"
             )
             logger.info(docdb_response)
