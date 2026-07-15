@@ -261,8 +261,8 @@ class CaptureResultsJob:
             )
             data_asset = self.co_client.data_assets.wait_until_ready(
                 data_asset=captured_data_asset,
-                polling_interval=10,
-                timeout=600,
+                polling_interval=300,
+                timeout=129600,
             )
             if data_asset.state != DataAssetState.Ready:
                 raise Exception(f"Data asset creation failed! {data_asset}")
