@@ -49,9 +49,6 @@ class JobSettings(BaseSettings):
         default="api.allenneuraldynamics.org",
         description="Host name for DocDB API Gateway",
     )
-    docdb_collection_version: str = Field(
-        default="v1", description="Version of Metadata Index"
-    )
     destination_bucket: str = Field(
         ..., description="S3 bucket to capture results to."
     )
@@ -85,16 +82,24 @@ class JobSettings(BaseSettings):
 class CaptureResultsJob:
     """Job to capture results and register the data asset"""
 
+    # Each tuple is a group of interchangeable schema files. Exactly one
+    # file from every group must be present in the results folder. The
+    # ``rig``/``instrument`` and ``session``/``acquisition`` groups capture
+    # the v1 -> v2 renames of those schemas.
+    SCHEMA_FILE_GROUPS = (
+        ("rig.json", "instrument.json"),
+        ("session.json", "acquisition.json"),
+        ("data_description.json",),
+        ("procedures.json",),
+        ("subject.json",),
+    )
+
     def __init__(self, job_settings: JobSettings):
         """Class constructor"""
         self.job_settings = job_settings
         self.co_client = CodeOcean(
             domain=self.job_settings.codeocean_domain,
             token=self.job_settings.codeocean_token.get_secret_value(),
-        )
-        self.docdb_client = MetadataDbClient(
-            host=self.job_settings.docdb_host,
-            version=self.job_settings.docdb_collection_version,
         )
 
     @cached_property
@@ -103,6 +108,71 @@ class CaptureResultsJob:
         return self.co_client.computations.get_computation(
             self.job_settings.co_source_computation_id
         )
+
+    @classmethod
+    def _collection_version_from_schema(cls, schemas: dict) -> str:
+        """
+        Determine the DocDB collection version from the tracked schema files.
+
+        Every group in :attr:`SCHEMA_FILE_GROUPS` must be represented by at
+        least one present file, otherwise the metadata is incomplete and the
+        collection cannot be determined. The collection version is the lowest
+        schema major version found across the present files (major version
+        ``N`` -> ``vN``): if any file is still on v1 the asset belongs in the
+        v1 collection, and only when every file is on v2 does it belong in the
+        v2 collection.
+
+        Fails loudly when a required file is missing or a schema version is
+        absent or cannot be parsed, rather than guessing which collection the
+        metadata belongs to.
+
+        Parameters
+        ----------
+        schemas : dict
+            Mapping of schema file name (e.g. ``"data_description.json"``) to
+            its parsed contents. Only files present in the results folder
+            should appear as keys.
+
+        Returns
+        -------
+        str
+            The DocDB collection version, e.g. ``"v2"``.
+
+        Raises
+        ------
+        ValueError
+            If a required schema file group has no present file, or a present
+            file is missing a ``schema_version`` or its major version cannot
+            be parsed as an integer.
+        """
+        missing = [
+            " or ".join(group)
+            for group in cls.SCHEMA_FILE_GROUPS
+            if not any(name in schemas for name in group)
+        ]
+        if missing:
+            raise ValueError(
+                "Cannot determine the DocDB collection version; the results "
+                "are missing required schema file(s): "
+                f"{'; '.join(missing)}."
+            )
+        majors = []
+        for name, contents in schemas.items():
+            schema_version = contents.get("schema_version")
+            if not schema_version:
+                raise ValueError(
+                    f"'{name}' is missing a 'schema_version'; cannot "
+                    "determine the DocDB collection version."
+                )
+            major = str(schema_version).split(".")[0]
+            if not major.isdigit():
+                raise ValueError(
+                    "Could not parse a major version from schema_version "
+                    f"'{schema_version}' in '{name}'; cannot determine the "
+                    "DocDB collection version."
+                )
+            majors.append(int(major))
+        return f"v{min(majors)}"
 
     def _check_pipeline_end_status(self):
         """Checks if the pipeline finished successfully."""
@@ -131,16 +201,62 @@ class CaptureResultsJob:
                 f"End Status: {end_status}."
             )
 
-    def _get_data_description(self) -> dict:
-        """Download the data description file from the results folder."""
+    def _list_result_file_names(self) -> set:
+        """
+        List the file names at the root of the computation results folder.
+
+        Returns
+        -------
+        set
+            The names of the files (not sub-folders) in the results folder.
+        """
+        folder = self.co_client.computations.list_computation_results(
+            computation_id=self.job_settings.co_source_computation_id
+        )
+        return {item.name for item in folder.items if item.type == "file"}
+
+    def _get_result_file(self, path: str) -> dict:
+        """
+        Download and parse a JSON file from the computation results folder.
+
+        Parameters
+        ----------
+        path : str
+            The path of the file within the results folder, e.g.
+            ``"data_description.json"``.
+
+        Returns
+        -------
+        dict
+            The parsed JSON contents of the file.
+        """
         file_urls = self.co_client.computations.get_result_file_urls(
             computation_id=self.job_settings.co_source_computation_id,
-            path="data_description.json",
+            path=path,
         )
         with urlopen(file_urls.download_url) as f:
             contents = f.read().decode("utf-8")
-        data_description = json.loads(contents)
-        return data_description
+        return json.loads(contents)
+
+    def _get_schemas(self) -> dict:
+        """
+        Download every tracked schema file present in the results folder.
+
+        Returns
+        -------
+        dict
+            Mapping of schema file name to its parsed contents, containing
+            only the files from :attr:`SCHEMA_FILE_GROUPS` that are present.
+        """
+        present = self._list_result_file_names()
+        tracked = {
+            name for group in self.SCHEMA_FILE_GROUPS for name in group
+        }
+        return {
+            name: self._get_result_file(name)
+            for name in sorted(tracked)
+            if name in present
+        }
 
     @staticmethod
     def _check_if_target_already_exists(bucket: str, prefix: str) -> bool:
@@ -205,7 +321,8 @@ class CaptureResultsJob:
         """
         Main job runner.
         - Checks pipeline status
-        - Get the data description from the results folder
+        - Get the tracked schema files from the results folder
+        - Determine the DocDB collection version from the schemas
         - Check if the s3 bucket and prefix already exists
         - Capture the results as a data asset
         - Register the data asset with DocDB
@@ -213,7 +330,9 @@ class CaptureResultsJob:
         """
         try:
             self._check_pipeline_end_status()
-            data_description = self._get_data_description()
+            schemas = self._get_schemas()
+            collection_version = self._collection_version_from_schema(schemas)
+            data_description = schemas["data_description.json"]
             s3_bucket = self.job_settings.destination_bucket
             s3_prefix = data_description["name"].strip("/")
             if self._check_if_target_already_exists(
@@ -227,8 +346,8 @@ class CaptureResultsJob:
             )
             data_asset = self.co_client.data_assets.wait_until_ready(
                 data_asset=captured_data_asset,
-                polling_interval=10,
-                timeout=600,
+                polling_interval=300,
+                timeout=129600,
             )
             if data_asset.state != DataAssetState.Ready:
                 raise Exception(f"Data asset creation failed! {data_asset}")
@@ -236,7 +355,11 @@ class CaptureResultsJob:
                 data_asset_id=data_asset.id,
                 permissions=self.job_settings.asset_permissions,
             )
-            docdb_response = self.docdb_client.register_asset(
+            docdb_client = MetadataDbClient(
+                host=self.job_settings.docdb_host,
+                version=collection_version,
+            )
+            docdb_response = docdb_client.register_asset(
                 s3_location=f"s3://{s3_bucket}/{s3_prefix}"
             )
             logger.info(docdb_response)

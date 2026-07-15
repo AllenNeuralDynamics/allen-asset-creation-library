@@ -84,7 +84,6 @@ class TestCaptureResultsJob(unittest.TestCase):
             "codeocean_token": "abc-123",
             "codeocean_domain": "https://example.com",
             "docdb_host": "example.com",
-            "docdb_collection_version": "v1",
             "destination_bucket": "example",
             "asset_permissions": {
                 "users": [{"email": "abc@example.com", "role": "owner"}],
@@ -151,6 +150,15 @@ class TestCaptureResultsJob(unittest.TestCase):
             job_settings=JobSettings(**stopped_job_settings)
         )
         cls.data_description = base_data_description
+        # A complete set of v2 schema files: one file per required group,
+        # each on schema major version 2.
+        cls.base_schemas = {
+            "instrument.json": {"schema_version": "2.0.0"},
+            "acquisition.json": {"schema_version": "2.0.0"},
+            "data_description.json": base_data_description,
+            "procedures.json": {"schema_version": "2.0.0"},
+            "subject.json": {"schema_version": "2.0.0"},
+        }
         cls.base_wait_until_ready_response = base_wait_until_ready_response
         cls.base_capture_result_response = base_capture_result_response
 
@@ -212,17 +220,123 @@ class TestCaptureResultsJob(unittest.TestCase):
         self.assertIn("End Status: stopped", str(e.exception))
 
     @patch("allen_asset_creation_library.job.urlopen")
-    def test_get_data_description(
+    def test_get_result_file(
         self,
         mock_urlopen: MagicMock,
     ):
-        """Tests _get_data_description method."""
+        """Tests _get_result_file method."""
 
         (
             mock_urlopen.return_value.__enter__.return_value.read
         ).return_value = b'{"key": "value"}'
-        data_description = self.job._get_data_description()
-        self.assertEqual({"key": "value"}, data_description)
+        contents = self.job._get_result_file("data_description.json")
+        self.assertEqual({"key": "value"}, contents)
+
+    def test_list_result_file_names(self):
+        """Tests _list_result_file_names filters to files only."""
+        folder = MagicMock()
+        folder.items = [
+            MagicMock(name="data_description.json", type="file"),
+            MagicMock(name="subject.json", type="file"),
+            MagicMock(name="a_subfolder", type="folder"),
+        ]
+        # MagicMock's ``name`` kwarg is special, so set it explicitly.
+        folder.items[0].name = "data_description.json"
+        folder.items[1].name = "subject.json"
+        folder.items[2].name = "a_subfolder"
+        (
+            self.mock_codeocean_client.return_value.computations
+        ).list_computation_results.return_value = folder
+        self.assertEqual(
+            {"data_description.json", "subject.json"},
+            self.job._list_result_file_names(),
+        )
+
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob._get_result_file"
+    )
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob"
+        "._list_result_file_names"
+    )
+    def test_get_schemas(
+        self,
+        mock_list_result_file_names: MagicMock,
+        mock_get_result_file: MagicMock,
+    ):
+        """Downloads only the tracked schema files that are present."""
+        mock_list_result_file_names.return_value = {
+            "instrument.json",
+            "acquisition.json",
+            "data_description.json",
+            "procedures.json",
+            "subject.json",
+            "processing.json",  # not a tracked schema; should be ignored
+        }
+        mock_get_result_file.return_value = {"schema_version": "2.0.0"}
+        schemas = self.job._get_schemas()
+        self.assertEqual(
+            {
+                "instrument.json",
+                "acquisition.json",
+                "data_description.json",
+                "procedures.json",
+                "subject.json",
+            },
+            set(schemas),
+        )
+
+    def test_collection_version_from_schema(self):
+        """All v2 schemas map to the v2 DocDB collection."""
+        self.assertEqual(
+            "v2",
+            self.job._collection_version_from_schema(self.base_schemas),
+        )
+
+    def test_collection_version_from_schema_any_v1(self):
+        """A single v1 schema forces the v1 DocDB collection."""
+        schemas = deepcopy(self.base_schemas)
+        # Swap in the v1 file names/versions for one group.
+        del schemas["acquisition.json"]
+        schemas["session.json"] = {"schema_version": "1.0.0"}
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
+    def test_collection_version_from_schema_required_missing(self):
+        """Fails loudly when a required schema file group is missing."""
+        schemas = deepcopy(self.base_schemas)
+        del schemas["procedures.json"]
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(schemas)
+        self.assertIn("missing required schema file(s)", str(e.exception))
+        self.assertIn("procedures.json", str(e.exception))
+
+    def test_collection_version_from_schema_alternate_missing(self):
+        """Fails when neither file in an interchangeable group is present."""
+        schemas = deepcopy(self.base_schemas)
+        del schemas["instrument.json"]
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(schemas)
+        self.assertIn("rig.json or instrument.json", str(e.exception))
+
+    def test_collection_version_from_schema_version_missing(self):
+        """Fails loudly when a present file has no schema_version."""
+        schemas = deepcopy(self.base_schemas)
+        schemas["subject.json"] = {}
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(schemas)
+        self.assertIn("missing a 'schema_version'", str(e.exception))
+        self.assertIn("subject.json", str(e.exception))
+
+    def test_collection_version_from_schema_malformed(self):
+        """Fails loudly when a schema_version cannot be parsed."""
+        schemas = deepcopy(self.base_schemas)
+        schemas["subject.json"] = {"schema_version": "not-a-version"}
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(schemas)
+        self.assertIn("Could not parse a major version", str(e.exception))
 
     @patch("allen_asset_creation_library.job.boto3.client")
     def test_check_if_target_already_exists_true(
@@ -300,8 +414,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_asset_creation_library.job.CaptureResultsJob"
-        "._get_data_description"
+        "allen_asset_creation_library.job.CaptureResultsJob._get_schemas"
     )
     @patch(
         "allen_asset_creation_library.job.CaptureResultsJob"
@@ -311,13 +424,13 @@ class TestCaptureResultsJob(unittest.TestCase):
         "allen_asset_creation_library.job.CaptureResultsJob"
         "._capture_results"
     )
-    @patch("allen_asset_creation_library.job.MetadataDbClient.register_asset")
+    @patch("allen_asset_creation_library.job.MetadataDbClient")
     def test_run_job_success(
         self,
-        mock_register_asset: MagicMock,
+        mock_docdb_client: MagicMock,
         mock_capture_results: MagicMock,
         mock_check_if_target_already_exists: MagicMock,
-        mock_get_data_description: MagicMock,
+        mock_get_schemas: MagicMock,
         mock_check_pipeline_end_status: MagicMock,
     ):
         """Tests run_job method when successful."""
@@ -328,11 +441,12 @@ class TestCaptureResultsJob(unittest.TestCase):
             **self.base_wait_until_ready_response
         )
         mock_check_pipeline_end_status.return_value = None
-        mock_get_data_description.return_value = self.data_description
+        mock_get_schemas.return_value = self.base_schemas
         mock_check_if_target_already_exists.return_value = False
         mock_capture_results.return_value = DataAsset(
             **self.base_capture_result_response
         )
+        mock_register_asset = mock_docdb_client.return_value.register_asset
         mock_register_asset.return_value = {"message": "success"}
         with self.assertLogs(level="INFO") as captured:
             self.job.run_job()
@@ -356,6 +470,10 @@ class TestCaptureResultsJob(unittest.TestCase):
                 everyone=EveryoneRole.Viewer,
             ),
         )
+        # The collection version is derived from schema_version "2.2.0".
+        mock_docdb_client.assert_called_once_with(
+            host="example.com", version="v2"
+        )
         mock_register_asset.assert_called_once_with(
             s3_location=(
                 "s3://example/123456_2025-01-28_16-48-50"
@@ -368,8 +486,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_asset_creation_library.job.CaptureResultsJob"
-        "._get_data_description"
+        "allen_asset_creation_library.job.CaptureResultsJob._get_schemas"
     )
     @patch(
         "allen_asset_creation_library.job.CaptureResultsJob"
@@ -390,13 +507,13 @@ class TestCaptureResultsJob(unittest.TestCase):
         mock_register_asset: MagicMock,
         mock_capture_results: MagicMock,
         mock_check_if_target_already_exists: MagicMock,
-        mock_get_data_description: MagicMock,
+        mock_get_schemas: MagicMock,
         mock_check_pipeline_end_status: MagicMock,
     ):
         """Tests run_job method failed when target already exists."""
 
         mock_check_pipeline_end_status.return_value = None
-        mock_get_data_description.return_value = self.data_description
+        mock_get_schemas.return_value = self.base_schemas
         mock_check_if_target_already_exists.return_value = True
         with self.assertRaises(Exception) as e:
             self.job.run_job()
@@ -409,8 +526,7 @@ class TestCaptureResultsJob(unittest.TestCase):
         "._check_pipeline_end_status"
     )
     @patch(
-        "allen_asset_creation_library.job.CaptureResultsJob"
-        "._get_data_description"
+        "allen_asset_creation_library.job.CaptureResultsJob._get_schemas"
     )
     @patch(
         "allen_asset_creation_library.job.CaptureResultsJob"
@@ -433,13 +549,13 @@ class TestCaptureResultsJob(unittest.TestCase):
         mock_register_asset: MagicMock,
         mock_capture_results: MagicMock,
         mock_check_if_target_already_exists: MagicMock,
-        mock_get_data_description: MagicMock,
+        mock_get_schemas: MagicMock,
         mock_check_pipeline_end_status: MagicMock,
     ):
         """Tests run_job method failed when capture failed."""
 
         mock_check_pipeline_end_status.return_value = None
-        mock_get_data_description.return_value = self.data_description
+        mock_get_schemas.return_value = self.base_schemas
         mock_check_if_target_already_exists.return_value = False
         failed_capture = deepcopy(self.base_wait_until_ready_response)
         failed_capture["state"] = "failed"
