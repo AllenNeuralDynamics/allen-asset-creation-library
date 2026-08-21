@@ -304,6 +304,66 @@ class TestCaptureResultsJob(unittest.TestCase):
             self.job._collection_version_from_schema(schemas),
         )
 
+    def test_collection_version_from_schema_legacy_rig(self):
+        """A legacy 0.x rig.json alongside v1 files still maps to v1."""
+        schemas = {
+            "rig.json": {"schema_version": "0.3.2"},
+            "session.json": {"schema_version": "1.0.3"},
+            "data_description.json": {"schema_version": "1.0.3"},
+            "procedures.json": {"schema_version": "1.1.3"},
+            "subject.json": {"schema_version": "1.0.2"},
+        }
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
+    def test_collection_version_from_schema_all_legacy(self):
+        """Metadata entirely on 0.x schemas maps to v1, not v0."""
+        schemas = {
+            "rig.json": {"schema_version": "0.3.2"},
+            "session.json": {"schema_version": "0.4.0"},
+            "data_description.json": {"schema_version": "0.10.0"},
+            "procedures.json": {"schema_version": "0.9.4"},
+            "subject.json": {"schema_version": "0.4.2"},
+        }
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
+    def test_collection_version_from_schema_legacy_with_v2(self):
+        """A legacy 0.x file does not drag a v2 record below v1."""
+        schemas = deepcopy(self.base_schemas)
+        schemas["instrument.json"] = {"schema_version": "0.3.2"}
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
+    def test_collection_version_from_schema_never_below_v1(self):
+        """No combination of schema versions can resolve below v1."""
+        for legacy_version in ("0.0.0", "0.3.2", "0.10.0"):
+            with self.subTest(schema_version=legacy_version):
+                schemas = deepcopy(self.base_schemas)
+                schemas["subject.json"] = {"schema_version": legacy_version}
+                self.assertEqual(
+                    "v1",
+                    self.job._collection_version_from_schema(schemas),
+                )
+
+    def test_collection_version_from_schema_above_max(self):
+        """Fails loudly when the resolved collection is not served."""
+        schemas = {
+            name: {"schema_version": "3.0.0"} for name in self.base_schemas
+        }
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema(schemas)
+        self.assertIn(
+            "Resolved DocDB collection version 'v3'", str(e.exception)
+        )
+        self.assertIn("MAX_COLLECTION_VERSION", str(e.exception))
+
     def test_collection_version_from_schema_required_missing(self):
         """Fails loudly when a required schema file group is missing."""
         schemas = deepcopy(self.base_schemas)

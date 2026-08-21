@@ -94,6 +94,12 @@ class CaptureResultsJob:
         ("subject.json",),
     )
 
+    # DocDB collection versions the metadata API actually serves. Schema major
+    # versions below the minimum predate the v1 schemas and belong in the v1
+    # collection; there is no v0 collection to route them to.
+    MIN_COLLECTION_VERSION = 1
+    MAX_COLLECTION_VERSION = 2
+
     def __init__(self, job_settings: JobSettings):
         """Class constructor"""
         self.job_settings = job_settings
@@ -122,8 +128,15 @@ class CaptureResultsJob:
         v1 collection, and only when every file is on v2 does it belong in the
         v2 collection.
 
-        Fails loudly when a required file is missing or a schema version is
-        absent or cannot be parsed, rather than guessing which collection the
+        A schema major version is not itself a collection version. Legacy
+        metadata predating the v1 schemas reports major version 0 -- a stale
+        ``rig.json`` at ``0.3.2`` alongside v1 files is the common case -- and
+        that metadata belongs in the v1 collection, so majors below
+        :attr:`MIN_COLLECTION_VERSION` are raised to it.
+
+        Fails loudly when a required file is missing, a schema version is
+        absent or cannot be parsed, or the resolved collection is one the
+        metadata API does not serve, rather than guessing which collection the
         metadata belongs to.
 
         Parameters
@@ -141,9 +154,10 @@ class CaptureResultsJob:
         Raises
         ------
         ValueError
-            If a required schema file group has no present file, or a present
+            If a required schema file group has no present file, a present
             file is missing a ``schema_version`` or its major version cannot
-            be parsed as an integer.
+            be parsed as an integer, or the resolved major version is above
+            :attr:`MAX_COLLECTION_VERSION`.
         """
         missing = [
             " or ".join(group)
@@ -172,7 +186,16 @@ class CaptureResultsJob:
                     "DocDB collection version."
                 )
             majors.append(int(major))
-        return f"v{min(majors)}"
+        resolved = max(min(majors), cls.MIN_COLLECTION_VERSION)
+        if resolved > cls.MAX_COLLECTION_VERSION:
+            raise ValueError(
+                f"Resolved DocDB collection version 'v{resolved}' from schema "
+                f"majors {sorted(set(majors))}, but the metadata API serves "
+                f"v{cls.MIN_COLLECTION_VERSION} through "
+                f"v{cls.MAX_COLLECTION_VERSION}; update "
+                "MAX_COLLECTION_VERSION once the API serves it."
+            )
+        return f"v{resolved}"
 
     def _check_pipeline_end_status(self):
         """Checks if the pipeline finished successfully."""
