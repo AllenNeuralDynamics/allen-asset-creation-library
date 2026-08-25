@@ -94,6 +94,9 @@ class CaptureResultsJob:
         ("subject.json",),
     )
 
+    # Lowest collection version the metadata API serves.
+    MIN_COLLECTION_VERSION = 1
+
     def __init__(self, job_settings: JobSettings):
         """Class constructor"""
         self.job_settings = job_settings
@@ -121,6 +124,10 @@ class CaptureResultsJob:
         ``N`` -> ``vN``): if any file is still on v1 the asset belongs in the
         v1 collection, and only when every file is on v2 does it belong in the
         v2 collection.
+
+        Metadata predating the v1 schemas reports major version 0 and belongs
+        in the v1 collection, so majors below
+        :attr:`MIN_COLLECTION_VERSION` are raised to it.
 
         Fails loudly when a required file is missing or a schema version is
         absent or cannot be parsed, rather than guessing which collection the
@@ -172,7 +179,7 @@ class CaptureResultsJob:
                     "DocDB collection version."
                 )
             majors.append(int(major))
-        return f"v{min(majors)}"
+        return f"v{max(min(majors), cls.MIN_COLLECTION_VERSION)}"
 
     def _check_pipeline_end_status(self):
         """Checks if the pipeline finished successfully."""

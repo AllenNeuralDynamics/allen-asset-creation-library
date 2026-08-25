@@ -304,6 +304,27 @@ class TestCaptureResultsJob(unittest.TestCase):
             self.job._collection_version_from_schema(schemas),
         )
 
+    def test_collection_version_from_schema_legacy(self):
+        """A legacy 0.x schema maps to the v1 collection, not v0."""
+        schemas = deepcopy(self.base_schemas)
+        # Swap in the pre-v1 rig file for the instrument group.
+        del schemas["instrument.json"]
+        schemas["rig.json"] = {"schema_version": "0.3.2"}
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
+    def test_collection_version_from_schema_all_legacy(self):
+        """Metadata entirely on 0.x schemas maps to the v1 collection."""
+        schemas = {
+            name: {"schema_version": "0.3.2"} for name in self.base_schemas
+        }
+        self.assertEqual(
+            "v1",
+            self.job._collection_version_from_schema(schemas),
+        )
+
     def test_collection_version_from_schema_required_missing(self):
         """Fails loudly when a required schema file group is missing."""
         schemas = deepcopy(self.base_schemas)
