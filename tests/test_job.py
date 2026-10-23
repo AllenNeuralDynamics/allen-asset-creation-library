@@ -158,6 +158,8 @@ class TestCaptureResultsJob(unittest.TestCase):
             "data_description.json": base_data_description,
             "procedures.json": {"schema_version": "2.0.0"},
             "subject.json": {"schema_version": "2.0.0"},
+            "processing.json": {"schema_version": "2.0.0"},
+            "quality_control.json": {"schema_version": "2.0.0"},
         }
         cls.base_wait_until_ready_response = base_wait_until_ready_response
         cls.base_capture_result_response = base_capture_result_response
@@ -271,7 +273,8 @@ class TestCaptureResultsJob(unittest.TestCase):
             "data_description.json",
             "procedures.json",
             "subject.json",
-            "processing.json",  # not a tracked schema; should be ignored
+            "processing.json",
+            "metadata.nd.json",  # not a tracked schema; should be ignored
         }
         mock_get_result_file.return_value = {"schema_version": "2.0.0"}
         schemas = self.job._get_schemas()
@@ -282,6 +285,7 @@ class TestCaptureResultsJob(unittest.TestCase):
                 "data_description.json",
                 "procedures.json",
                 "subject.json",
+                "processing.json",
             },
             set(schemas),
         )
@@ -325,22 +329,122 @@ class TestCaptureResultsJob(unittest.TestCase):
             self.job._collection_version_from_schema(schemas),
         )
 
-    def test_collection_version_from_schema_required_missing(self):
-        """Fails loudly when a required schema file group is missing."""
+    def test_collection_version_from_schema_empty(self):
+        """Fails loudly when no schema files are present at all."""
+        with self.assertRaises(ValueError) as e:
+            self.job._collection_version_from_schema({})
+        self.assertIn("contain no schema files", str(e.exception))
+
+    def test_is_multi_session_v2_single_source(self):
+        """A v2 asset with one source entry is single-session."""
+        self.assertFalse(self.job._is_multi_session(self.data_description))
+
+    def test_is_multi_session_v2_many_sources(self):
+        """A v2 asset with several source entries is multi-session."""
+        data_description = deepcopy(self.data_description)
+        data_description["source_data"] = ["session_a", "session_b"]
+        self.assertTrue(self.job._is_multi_session(data_description))
+
+    def test_is_multi_session_v1_string_source(self):
+        """A v1 asset names a single source as a string."""
+        data_description = {
+            "schema_version": "1.0.0",
+            "input_data_name": "session_a",
+        }
+        self.assertFalse(self.job._is_multi_session(data_description))
+
+    def test_is_multi_session_v1_alternate_field(self):
+        """A v1 asset using the 'input_data' field name is also read."""
+        data_description = {
+            "schema_version": "1.0.0",
+            "input_data": "session_a",
+        }
+        self.assertFalse(self.job._is_multi_session(data_description))
+
+    def test_is_multi_session_raw(self):
+        """A raw asset leaves the source field unset and is single-session."""
+        data_description = {"schema_version": "2.0.0"}
+        self.assertFalse(self.job._is_multi_session(data_description))
+
+    def test_is_multi_session_legacy_major(self):
+        """A pre-v1 schema major is read with the v1 source field."""
+        data_description = {
+            "schema_version": "0.3.2",
+            "input_data_name": "session_a",
+        }
+        self.assertFalse(self.job._is_multi_session(data_description))
+
+    def test_is_multi_session_unknown_major(self):
+        """An unknown schema major falls back to the newest known field."""
+        data_description = {
+            "schema_version": "3.0.0",
+            "source_data": ["session_a", "session_b"],
+        }
+        self.assertTrue(self.job._is_multi_session(data_description))
+
+    def test_check_required_schemas_single_session(self):
+        """A complete single-session asset passes the presence check."""
+        self.assertIsNone(
+            self.job._check_required_schemas(self.base_schemas)
+        )
+
+    def test_check_required_schemas_required_missing(self):
+        """Fails loudly when a single-session asset is missing a file."""
         schemas = deepcopy(self.base_schemas)
         del schemas["procedures.json"]
         with self.assertRaises(ValueError) as e:
-            self.job._collection_version_from_schema(schemas)
-        self.assertIn("missing required schema file(s)", str(e.exception))
+            self.job._check_required_schemas(schemas)
+        self.assertIn("single-session", str(e.exception))
         self.assertIn("procedures.json", str(e.exception))
 
-    def test_collection_version_from_schema_alternate_missing(self):
+    def test_check_required_schemas_accumulated_missing(self):
+        """Fails when a single-session asset is missing quality control."""
+        schemas = deepcopy(self.base_schemas)
+        del schemas["quality_control.json"]
+        with self.assertRaises(ValueError) as e:
+            self.job._check_required_schemas(schemas)
+        self.assertIn("single-session", str(e.exception))
+        self.assertIn("quality_control.json", str(e.exception))
+
+    def test_check_required_schemas_alternate_missing(self):
         """Fails when neither file in an interchangeable group is present."""
         schemas = deepcopy(self.base_schemas)
         del schemas["instrument.json"]
         with self.assertRaises(ValueError) as e:
-            self.job._collection_version_from_schema(schemas)
+            self.job._check_required_schemas(schemas)
         self.assertIn("rig.json or instrument.json", str(e.exception))
+
+    def test_check_required_schemas_multi_session(self):
+        """A multi-session asset only needs the accumulated files."""
+        data_description = deepcopy(self.data_description)
+        data_description["source_data"] = ["session_a", "session_b"]
+        schemas = {
+            "data_description.json": data_description,
+            "processing.json": {"schema_version": "2.0.0"},
+            "quality_control.json": {"schema_version": "2.0.0"},
+        }
+        self.assertIsNone(self.job._check_required_schemas(schemas))
+
+    def test_check_required_schemas_multi_session_missing(self):
+        """Fails when a multi-session asset is missing an accumulated file."""
+        data_description = deepcopy(self.data_description)
+        data_description["source_data"] = ["session_a", "session_b"]
+        schemas = {
+            "data_description.json": data_description,
+            "processing.json": {"schema_version": "2.0.0"},
+        }
+        with self.assertRaises(ValueError) as e:
+            self.job._check_required_schemas(schemas)
+        self.assertIn("multi-session", str(e.exception))
+        self.assertIn("quality_control.json", str(e.exception))
+
+    def test_check_required_schemas_data_description_missing(self):
+        """Fails loudly when the data description itself is missing."""
+        schemas = deepcopy(self.base_schemas)
+        del schemas["data_description.json"]
+        with self.assertRaises(ValueError) as e:
+            self.job._check_required_schemas(schemas)
+        self.assertIn("data_description.json", str(e.exception))
 
     def test_collection_version_from_schema_version_missing(self):
         """Fails loudly when a present file has no schema_version."""
