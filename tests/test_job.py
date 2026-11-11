@@ -655,6 +655,39 @@ class TestCaptureResultsJob(unittest.TestCase):
     )
     @patch(
         "allen_asset_creation_library.job.CaptureResultsJob"
+        "._capture_results"
+    )
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob"
+        "._send_notification"
+    )
+    def test_run_job_skip_automation(
+        self,
+        mock_send_notification: MagicMock,
+        mock_capture_results: MagicMock,
+        mock_get_schemas: MagicMock,
+        mock_check_pipeline_end_status: MagicMock,
+    ):
+        """Tests run_job skips capture when name has 'skip-automation'."""
+
+        schemas = deepcopy(self.base_schemas)
+        schemas["data_description.json"]["name"] += "_skip-automation"
+        mock_check_pipeline_end_status.return_value = None
+        mock_get_schemas.return_value = schemas
+        with self.assertRaises(Exception) as e:
+            self.job.run_job()
+        self.assertIn("Skipping automation", str(e.exception))
+        mock_capture_results.assert_not_called()
+
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob"
+        "._check_pipeline_end_status"
+    )
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob._get_schemas"
+    )
+    @patch(
+        "allen_asset_creation_library.job.CaptureResultsJob"
         "._check_if_target_already_exists"
     )
     @patch(
