@@ -480,6 +480,8 @@ class CaptureResultsJob:
             self._check_required_schemas(schemas)
             collection_version = self._collection_version_from_schema(schemas)
             data_description = schemas["data_description.json"]
+            if "skip-automation" in data_description.get("name", ""):
+                raise Exception("Skipping automation as per data description.")
             s3_bucket = self.job_settings.destination_bucket
             s3_prefix = data_description["name"].strip("/")
             if self._check_if_target_already_exists(
